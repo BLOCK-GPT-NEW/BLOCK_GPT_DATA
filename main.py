@@ -3,25 +3,19 @@ import pymongo
 import multiprocessing
 import time
 
-BATCH_SIZE = 100  # Adjust this as per your needs
+BATCH_SIZE = 10000  # Adjust this as per your needs
 # multiprocessing.cpu_count()
-PROCESSES = 2
 
-def batched_cursor(cursor, batch_size, process_num):
-    batchs = []
+def batched_cursor(cursor, batch_size):
     batch = []
     for item in cursor:
         batch.append(item)
         if len(batch) == batch_size:
-            batchs.append(batch)
+            yield batch
             batch.clear()
-        if len(batchs)==process_num:
-            yield batchs
-            batchs.clear()
-    if batchs:
-        yield batchs
-    elif batch:
-        yield [batch]
+    if batch:
+        yield batch
+
 
 def database_writer(queue, batch_size=100):
     MongoClient_out = pymongo.MongoClient(host="10.12.46.33", port=27018,username="b515",password="sqwUiJGHYQTikv6z")
@@ -45,7 +39,6 @@ def database_writer(queue, batch_size=100):
             collection_out.insert_many([{'tx_hash': item['tx_hash'],'call':item['call']} for item in batch_data])
             batch_data.clear()  # 清空列表以准备下一批数据
 
-
 def wrapper_func(args):
     return process_record(*args)
 
@@ -56,11 +49,11 @@ def main():
 
     # 查询规则
     query = {
-        "tx_blocknum": {"$gt": 4000000, "$lt": 4001000},
+        "tx_blocknum": {"$gt": 4000000, "$lt": 4100000},
         "tx_trace": {"$ne": ""}
     }
-    cursor = collection.find(query)
-    BC = batched_cursor(cursor,BATCH_SIZE,PROCESSES)
+    cursor = collection.find(query).batch_size(1000)
+    BC = batched_cursor(cursor,BATCH_SIZE)
 
     # 初始化消息队列
     queue = multiprocessing.Manager().Queue(1000)
@@ -70,19 +63,20 @@ def main():
     db_writer_process.start()
 
     st = time.time()
-    with multiprocessing.Pool(PROCESSES) as pool:
+
+    with multiprocessing.Pool(8) as pool:
         # 处理每个batch
         while True:
             try:
                 # 处理一个batch
-                batch = next(BC)
-                pool.imap_unordered(wrapper_func, [(item, queue) for item in batch])
+                batch = next(BC) #需要一定时间
+                pool.map(wrapper_func, [(item, queue) for item in batch])
             except StopIteration:
                 # 结束后关闭队列
-                time.sleep(5)
                 queue.put("STOP")
                 break
 
+    queue.put("STOP")
     db_writer_process.join()
     print(time.time()-st)
 
