@@ -337,5 +337,3 @@ def process_record(batch, queue):
             slice_count = slice_count + 1
         # 写入消息队列
         queue.put({"tx_hash":tx_hash,"call":call_records})
-    batch.clear()
-    return True
