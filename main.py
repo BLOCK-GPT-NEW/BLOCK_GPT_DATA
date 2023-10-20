@@ -2,8 +2,8 @@ from utilities import process_record
 import pymongo
 import multiprocessing
 import time
-import json
 from multiprocessing import Semaphore
+import sys
 
 
 BATCH_SIZE = 1000  # Adjust this as per your needs
@@ -21,6 +21,16 @@ def batched_cursor(cursor, batch_size):
 
 
 def database_writer(queue, batch_size=1000):
+    def handle_BSONObjectTooLarge(batch_data):
+        tmp = []
+        # 过滤超过16MB的数据，避免BSONObjectTooLarge报错
+        for item in batch_data:
+            if sys.getsizeof(item) > 15 * 1024 * 1024:  # 15MB as a buffer
+                print(f"Warning: Large document of size {sys.getsizeof(item)} bytes")
+            else:
+                tmp.append({'tx_hash': item['tx_hash'],'call':item['call']})
+        return tmp
+
     MongoClient_out = pymongo.MongoClient(host="10.12.46.33", port=27018,username="b515",password="sqwUiJGHYQTikv6z")
     collection_out = MongoClient_out['geth']['cnz_output']
     cnt = 0
@@ -31,7 +41,7 @@ def database_writer(queue, batch_size=1000):
             # 如果存在未插入的数据，插入它们
             print(cnt)
             if batch_data:
-                collection_out.insert_many([{'tx_hash': item['tx_hash'],'call':item['call']} for item in batch_data])
+                collection_out.insert_many(handle_BSONObjectTooLarge(batch_data))
                 batch_data.clear()
             break
         cnt+=1
@@ -39,7 +49,7 @@ def database_writer(queue, batch_size=1000):
 
         # 当达到批量大小时进行写入
         if len(batch_data) == batch_size:
-            collection_out.insert_many([{'tx_hash': item['tx_hash'],'call':json.dumps(item['call'])} for item in batch_data])
+            collection_out.insert_many(handle_BSONObjectTooLarge(batch_data))
             batch_data.clear()  # 清空列表以准备下一批数据
     MongoClient_out.close()
 
@@ -51,7 +61,7 @@ if __name__ == "__main__":
 
     # 查询规则
     query = {
-        "tx_blocknum": {"$gt": 4000000, "$lt": 4100000},
+        "tx_blocknum": {"$gt": 4000000, "$lt": 5000000},
         "tx_trace": {"$ne": ""}
     }
     cursor = collection.find(query).batch_size(2000)
