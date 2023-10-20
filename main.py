@@ -13,7 +13,6 @@ BATCH_SIZE = 1000
 #
 #处理数据的进程数量
 process_cnt = 1
-output_handle_cnt = 1
 
 def batched_cursor(cursor, batch_size):
     batch = []
