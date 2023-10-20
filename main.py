@@ -20,12 +20,12 @@ def batched_cursor(cursor, batch_size):
         yield batch
 
 
-def database_writer(queue, batch_size=1000):
+def database_writer(queue, batch_size=100):
     def handle_BSONObjectTooLarge(batch_data):
         tmp = []
         # 过滤超过16MB的数据，避免BSONObjectTooLarge报错
         for item in batch_data:
-            if sys.getsizeof(item) > 15 * 1024 * 1024:  # 15MB as a buffer
+            if sys.getsizeof(item) > 10 * 1024 * 1024:  # 10MB as a buffer
                 print(f"Warning: Large document of size {sys.getsizeof(item)} bytes")
             else:
                 tmp.append({'tx_hash': item['tx_hash'],'call':item['call']})
@@ -64,11 +64,11 @@ if __name__ == "__main__":
         "tx_blocknum": {"$gt": 4000000, "$lt": 5000000},
         "tx_trace": {"$ne": ""}
     }
-    cursor = collection.find(query).batch_size(2000)
+    cursor = collection.find(query).batch_size(500)
 
     BC = batched_cursor(cursor,BATCH_SIZE)
     # 初始化消息队列
-    queue = multiprocessing.Manager().Queue(1000)
+    queue = multiprocessing.Manager().Queue(500)
     
     # 创建单独的数据库写入进程
     db_writer_process = multiprocessing.Process(target=database_writer, args=(queue,))
@@ -76,7 +76,7 @@ if __name__ == "__main__":
 
     st = time.time()
     cnt = 0
-    max_tasks = 4 * 30  # 假设你希望任务队列中最多有 10 个任务
+    max_tasks = 10
     semaphore = Semaphore(max_tasks)
 
     def release_semaphore(result):
