@@ -17,7 +17,7 @@ def process_output_handle(queue_in, queue_out):
             break
         cnt+=1
         if sys.getsizeof(json.dumps(item)) > 15 * 1024 * 1024:  # 15MB as a buffer
-            print(f"Warning: Large document of size {sys.getsizeof(json.dumps(item))} bytes")
+            print(f"Warning: Large document of size {sys.getsizeof(json.dumps(item))} bytes: {item['tx_hash']}")
         else:
             queue_out.put({'tx_hash': item['tx_hash'],'call':item['call']})
 
