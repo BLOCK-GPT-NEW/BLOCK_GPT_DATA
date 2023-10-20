@@ -4,10 +4,16 @@ import multiprocessing
 import time
 from multiprocessing import Semaphore
 import sys
+import json
 
+BATCH_SIZE = 1000
 
-BATCH_SIZE = 1000  # Adjust this as per your needs
-# multiprocessing.cpu_count()
+# 调整该参数 使瓶颈在远端的mongodb上
+# 若提高某个参数能提升CPU占用率，说明瓶颈还在本地
+#
+#处理数据的进程数量
+process_cnt = 1
+output_handle_cnt = 1
 
 def batched_cursor(cursor, batch_size):
     batch = []
@@ -19,18 +25,20 @@ def batched_cursor(cursor, batch_size):
     if batch:
         yield batch
 
+def process_output_handle(queue_in, queue_out):
+    # handle_BSONObjectTooLarge
+    while True:
+        item = queue_in.get()
+        if item == "STOP":
+            queue_out.put("STOP")
+            break
+        if sys.getsizeof(json.dumps(item)) > 15 * 1024 * 1024:  # 10MB as a buffer
+            print(f"Warning: Large document of size {sys.getsizeof(json.dumps(item))} bytes")
+        else:
+            queue_out.put({'tx_hash': item['tx_hash'],'call':item['call']})
 
-def database_writer(queue, batch_size=100):
-    def handle_BSONObjectTooLarge(batch_data):
-        tmp = []
-        # 过滤超过16MB的数据，避免BSONObjectTooLarge报错
-        for item in batch_data:
-            if sys.getsizeof(item) > 10 * 1024 * 1024:  # 10MB as a buffer
-                print(f"Warning: Large document of size {sys.getsizeof(item)} bytes")
-            else:
-                tmp.append({'tx_hash': item['tx_hash'],'call':item['call']})
-        return tmp
 
+def process_database_writer(queue, batch_size=100):
     MongoClient_out = pymongo.MongoClient(host="10.12.46.33", port=27018,username="b515",password="sqwUiJGHYQTikv6z")
     collection_out = MongoClient_out['geth']['cnz_output']
     cnt = 0
@@ -41,7 +49,7 @@ def database_writer(queue, batch_size=100):
             # 如果存在未插入的数据，插入它们
             print(cnt)
             if batch_data:
-                collection_out.insert_many(handle_BSONObjectTooLarge(batch_data))
+                collection_out.insert_many(batch_data)
                 batch_data.clear()
             break
         cnt+=1
@@ -49,7 +57,7 @@ def database_writer(queue, batch_size=100):
 
         # 当达到批量大小时进行写入
         if len(batch_data) == batch_size:
-            collection_out.insert_many(handle_BSONObjectTooLarge(batch_data))
+            collection_out.insert_many(batch_data)
             batch_data.clear()  # 清空列表以准备下一批数据
     MongoClient_out.close()
 
@@ -61,28 +69,34 @@ if __name__ == "__main__":
 
     # 查询规则
     query = {
-        "tx_blocknum": {"$gt": 4000000, "$lt": 5000000},
+        "tx_blocknum": {"$gt": 4000000, "$lt": 4100000},
         "tx_trace": {"$ne": ""}
     }
     cursor = collection.find(query).batch_size(500)
 
     BC = batched_cursor(cursor,BATCH_SIZE)
     # 初始化消息队列
-    queue = multiprocessing.Manager().Queue(500)
+    queue_process = multiprocessing.Manager().Queue(500)
+    queue_db = multiprocessing.Manager().Queue(500)
     
-    # 创建单独的数据库写入进程
-    db_writer_process = multiprocessing.Process(target=database_writer, args=(queue,))
+    # 创建独立的返回数据处理进程
+    output_handle = multiprocessing.Process(target=process_output_handle, args=(queue_process, queue_db,))
+    output_handle.start()
+
+    # 创建独立的数据库写入进程
+    db_writer_process = multiprocessing.Process(target=process_database_writer, args=(queue_db,))
     db_writer_process.start()
+
 
     st = time.time()
     cnt = 0
-    max_tasks = 10
+    max_tasks = process_cnt * 10
     semaphore = Semaphore(max_tasks)
 
     def release_semaphore(result):
         semaphore.release()
 
-    with multiprocessing.Pool(1) as pool:
+    with multiprocessing.Pool(process_cnt) as pool:
         # 处理每个batch
         while True:
             try:
@@ -90,13 +104,14 @@ if __name__ == "__main__":
                 semaphore.acquire()
                 batch = next(BC) #需要一定时间
                 cnt += len(batch)
-                pool.apply_async(process_record, (batch, queue,), callback=release_semaphore)
+                pool.apply_async(process_record, (batch, queue_process,), callback=release_semaphore)
             except StopIteration:
                 print(cnt)
                 pool.close()  # 关闭进程池，不再接受新的任务
                 pool.join()   # 等待所有任务完成
-                queue.put("STOP")
+                queue_process.put("STOP")
                 break
 
+    # 等待其它进程完成
     db_writer_process.join()
     print(time.time()-st)
