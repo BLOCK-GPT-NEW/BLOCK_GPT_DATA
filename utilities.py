@@ -55,17 +55,19 @@ def process_record(record, queue):
             try :
                 func_name = func_names[call_input_func_dex]
             except KeyError as e:
-                for i in range(call_input_args_count):
-                    call_input.append({"call_input_type":"","call_input_value":"0x"+tx_input[8+64*i:8+64*(i+1)]})
+                if call_input_args_count!=0:
+                    for i in range(call_input_args_count):
+                        call_input.append({"call_input_type":"","call_input_value":"0x"+tx_input[8+64*i:8+64*(i+1)]})
             # 如果找到了，使用正则表达式来找函数里面的参数类型并写入call_input
             matches = re.findall(r'\((.*?)\)', func_name)
             if matches:
                 parameters = matches[0]
                 parameter_types = parameters.split(',')
-                i = 0
-                for parameter_type in parameter_types:
-                    call_input.append({"call_input_type":parameter_type,"call_input_value":"0x"+tx_input[8+64*i:8+64*(i+1)]})
-                    i = i+1
+                if call_input_args_count!=0:
+                    i = 0
+                    for parameter_type in parameter_types:
+                        call_input.append({"call_input_type":parameter_type,"call_input_value":"0x"+tx_input[8+64*i:8+64*(i+1)]})
+                        i = i+1
 
             # 处理call_output---------------
             match_call_output = re.search(r'RETURN;(.*?)[|]', slice)
@@ -73,7 +75,7 @@ def process_record(record, queue):
                 if match_call_output.group(1) != "": 
                     call_output_args_count = int(len(match_call_output.group(1))/64)
                     for i in range(call_output_args_count):
-                        call_output.append({"call_output_type":"","call_output_value":match_call_output.group(1)[64*i:64+64*i]})
+                        call_output.append({"call_output_type":"","call_output_value":"0x"+match_call_output.group(1)[64*i:64+64*i]})
 
             # 处理state----------------------------------------------------------------------
             state = []
@@ -85,7 +87,7 @@ def process_record(record, queue):
                 pattern_write_value = r'val:(.*?)$'
                 match_write_key = re.search(pattern_write_key, match_write)
                 match_write_value = re.search(pattern_write_value, match_write)
-                state.append({"tag":"write","key":match_write_key.group(1),"value":match_write_value.group(1)})
+                state.append({"tag":"read","key":match_write_key.group(1),"value":match_write_value.group(1)})
             
             pattern_read = r'SSTORE;(.*?)[|]'
             matches_read = re.findall(pattern_read, slice)         
@@ -94,7 +96,7 @@ def process_record(record, queue):
                 pattern_read_value = r'val:(.*?)$'
                 match_read_key = re.search(pattern_read_key, match_read)
                 match_read_value = re.search(pattern_read_value, match_read)
-                state.append({"tag":"read","key":match_read_key.group(1),"value":match_read_value.group(1)})
+                state.append({"tag":"write","key":match_read_key.group(1),"value":match_read_value.group(1)})
 
             # 处理log----------------------------------------------------------
             # log中的字符串变成数组方便后续处理
@@ -119,7 +121,7 @@ def process_record(record, queue):
                         log.append({"contract_address":contract_address[contract_address_count],"event_hash":"","data":""})
                     except IndexError :
                         continue
-                    log.append({"contract_address":contract_address[contract_address_count],"event_hash":"","data":""})
+                
 
                     contract_address_count = contract_address_count + 1
 
@@ -132,7 +134,7 @@ def process_record(record, queue):
                         log.append({"contract_address":contract_address[contract_address_count],"event_hash":event_hash[event_hash_count],"data":log_data})
                     except IndexError :
                         continue
-                    log.append({"contract_address":contract_address[contract_address_count],"event_hash":event_hash[event_hash_count],"data":log_data})
+                    
                     contract_address_count = contract_address_count + 1
                     event_hash_count = event_hash_count + 1
                     log_data_count = log_data_count + 1
@@ -146,7 +148,7 @@ def process_record(record, queue):
                         log.append({"contract_address":contract_address[contract_address_count],"event_hash":event_hash[event_hash_count],"data":log_data})
                     except IndexError :
                         continue
-                    log.append({"contract_address":contract_address[contract_address_count],"event_hash":event_hash[event_hash_count],"data":log_data})
+                    
                     contract_address_count = contract_address_count + 1
                     event_hash_count = event_hash_count + 2
                     log_data_count = log_data_count + 1
@@ -160,7 +162,7 @@ def process_record(record, queue):
                         log.append({"contract_address":contract_address[contract_address_count],"event_hash":event_hash[event_hash_count],"data":log_data})
                     except IndexError:
                         continue
-                    log.append({"contract_address":contract_address[contract_address_count],"event_hash":event_hash[event_hash_count],"data":log_data})
+                    
                     contract_address_count = contract_address_count + 1
                     event_hash_count = event_hash_count + 3
                     log_data_count = log_data_count + 1
@@ -174,7 +176,7 @@ def process_record(record, queue):
                         log.append({"contract_address":contract_address[contract_address_count],"event_hash":event_hash[event_hash_count],"data":log_data})
                     except IndexError:
                         continue
-                    log.append({"contract_address":contract_address[contract_address_count],"event_hash":event_hash[event_hash_count],"data":log_data})
+                    
                     contract_address_count = contract_address_count + 1
                     event_hash_count = event_hash_count + 4
                     log_data_count = log_data_count + 1
@@ -204,6 +206,7 @@ def process_record(record, queue):
 
             call_func_name = ""
             call_input = []
+            call_output = []
             func_name = ""
             if len(call_args) != 0:
                 call_func_name = call_args[:8]
@@ -211,23 +214,25 @@ def process_record(record, queue):
                 try :
                     func_name = func_names[call_func_name]
                 except KeyError as e:
-                    for i in range(call_args_count):
-                        call_input.append({"call_input_type":"","call_input_value":"0x"+tx_input[8+64*i:8+64*(i+1)]})
+                    if call_args_count!=0:
+                        for i in range(call_args_count):
+                            call_input.append({"call_input_type":"","call_input_value":"0x"+call_args[8+64*i:8+64+64*i]})
                 matches = re.findall(r'\((.*?)\)', func_name)
                 if matches:
                     parameters = matches[0]
                     parameter_types = parameters.split(',')
-                    i = 0
-                    for parameter_type in parameter_types:
-                        call_input.append({"call_input_type":parameter_type,"call_input_value":"0x"+tx_input[8+64*i:8+64*(i+1)]})
-                        i = i+1
+                    if call_args_count!=0:
+                        i = 0
+                        for parameter_type in parameter_types:
+                            call_input.append({"call_input_type":parameter_type,"call_input_value":"0x"+call_args[8+64*i:8+64+64*i]})
+                            i = i+1
             # 处理output
             match_call_output = re.search(r"Result:(.*?);", slice)
             if match_call_output:
                 if match_call_output.group(1) != "": 
                     call_output_args_count = int(len(match_call_output.group(1))/64)
                     for i in range(call_output_args_count):
-                        call_output.append({"call_output_type":"","call_output_value":match_call_output.group(1)[64*i:64+64*i]})
+                        call_output.append({"call_output_type":"","call_output_value":"0x"+match_call_output.group(1)[64*i:64+64*i]})
             # 处理state---------------------------------------------
             state = []
 
@@ -238,7 +243,7 @@ def process_record(record, queue):
                 pattern_write_value = r'val:(.*?)$'
                 match_write_key = re.search(pattern_write_key, match_write)
                 match_write_value = re.search(pattern_write_value, match_write)
-                state.append({"tag":"write","key":match_write_key.group(1),"value":match_write_value.group(1)})
+                state.append({"tag":"read","key":match_write_key.group(1),"value":match_write_value.group(1)})
             
             pattern_read = r'SSTORE;(.*?)[|]'
             matches_read = re.findall(pattern_read, slice)         
@@ -247,7 +252,7 @@ def process_record(record, queue):
                 pattern_read_value = r'val:(.*?)$'
                 match_read_key = re.search(pattern_read_key, match_read)
                 match_read_value = re.search(pattern_read_value, match_read)
-                state.append({"tag":"read","key":match_read_key.group(1),"value":match_read_value.group(1)})
+                state.append({"tag":"write","key":match_read_key.group(1),"value":match_read_value.group(1)})
 
             # 处理log-------------------------------------------------
             # log中的字符串变成数组方便后续处理
@@ -272,7 +277,7 @@ def process_record(record, queue):
                         log.append({"contract_address":contract_address[contract_address_count],"event_hash":"","data":""})
                     except IndexError:
                         continue
-                    log.append({"contract_address":contract_address[contract_address_count],"event_hash":"","data":""})
+                   
                     contract_address_count = contract_address_count + 1
 
                 elif match_log == "1" :
@@ -285,7 +290,7 @@ def process_record(record, queue):
                         log.append({"contract_address":contract_address[contract_address_count],"event_hash":event_hash[event_hash_count],"data":log_data})
                     except IndexError:
                         continue
-                    log.append({"contract_address":contract_address[contract_address_count],"event_hash":event_hash[event_hash_count],"data":log_data})
+                   
                     contract_address_count = contract_address_count + 1
                     event_hash_count = event_hash_count + 1
                     log_data_count = log_data_count + 1
@@ -299,7 +304,7 @@ def process_record(record, queue):
                         log.append({"contract_address":contract_address[contract_address_count],"event_hash":event_hash[event_hash_count],"data":log_data})
                     except IndexError :
                         continue
-                    log.append({"contract_address":contract_address[contract_address_count],"event_hash":event_hash[event_hash_count],"data":log_data})
+                  
                     contract_address_count = contract_address_count + 1
                     event_hash_count = event_hash_count + 2
                     log_data_count = log_data_count + 1
@@ -313,7 +318,7 @@ def process_record(record, queue):
                         log.append({"contract_address":contract_address[contract_address_count],"event_hash":event_hash[event_hash_count],"data":log_data})
                     except IndexError:
                         continue
-                    log.append({"contract_address":contract_address[contract_address_count],"event_hash":event_hash[event_hash_count],"data":log_data})
+                  
                     contract_address_count = contract_address_count + 1
                     event_hash_count = event_hash_count + 3
                     log_data_count = log_data_count + 1
@@ -327,13 +332,13 @@ def process_record(record, queue):
                         log.append({"contract_address":contract_address[contract_address_count],"event_hash":event_hash[event_hash_count],"data":log_data})
                     except IndexError:
                         continue
-                    log.append({"contract_address":contract_address[contract_address_count],"event_hash":event_hash[event_hash_count],"data":log_data})
+                    
                     contract_address_count = contract_address_count + 1
                     event_hash_count = event_hash_count + 4
                     log_data_count = log_data_count + 1
 
             # 汇总到一个call_record里面---------------
-            call_records.append({"call_from":call_from,"call_to":call_to,"call_function_name":call_input_func_dex,"call_gas":call_gas,"call_value":call_value,"call_input":call_input,"call_output":call_output,"stata":state,"log":log})
+            call_records.append({"call_from":call_from,"call_to":call_to,"call_function_name":call_func_name,"call_gas":call_gas,"call_value":call_value,"call_input":call_input,"call_output":call_output,"stata":state,"log":log})
         slice_count = slice_count + 1
     # 写入消息队列
     queue.put({"tx_hash":tx_hash,"call":call_records})
